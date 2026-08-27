@@ -14,11 +14,10 @@ import hashlib
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
-from db import CHROMA_DIR
+from db import CHROMA_DIR, EMBED_MODEL
 
 CACHE_COLLECTION_NAME = "resume_bot_cache"
-CACHE_EMBED_MODEL = "paraphrase-MiniLM-L6-v2"
-CACHE_SIMILARITY_THRESHOLD = 0.70
+CACHE_SIMILARITY_THRESHOLD = 0.65
 
 _cache_col = None
 
@@ -27,7 +26,7 @@ def _get_col():
     global _cache_col
     if _cache_col is None:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        ef = SentenceTransformerEmbeddingFunction(model_name=CACHE_EMBED_MODEL)
+        ef = SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
         _cache_col = client.get_or_create_collection(
             CACHE_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
