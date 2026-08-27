@@ -2,12 +2,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import threading
 import gradio as gr
 
-from rag import retrieve_and_answer, CONFIDENCE_THRESHOLD
+from rag import retrieve_and_answer, build_index, CONFIDENCE_THRESHOLD
 from notify import notify_unanswered
 
+# Load index in background so Gradio binds the port immediately.
+_index_ready = False
+
+def _load_index():
+    global _index_ready
+    try:
+        print("[startup] Loading index in background thread...")
+        build_index()
+        _index_ready = True
+        print("[startup] Background index load complete — ready.")
+    except Exception as e:
+        print(f"[startup] ERROR loading index: {e}")
+
+threading.Thread(target=_load_index, daemon=True).start()
+print("[startup] Gradio starting — index loading in background.")
+
+
 def respond(message, history):
+    if not _index_ready:
+        return "Still loading, please try again in a few seconds..."
     answer, confidence, error = retrieve_and_answer(message, history)
 
     if error:

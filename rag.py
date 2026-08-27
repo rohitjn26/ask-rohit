@@ -94,13 +94,17 @@ def _seed_faq(collection):
 def build_index():
     """Call once at startup to open the persistent ChromaDB collection."""
     global _collection
+    print("[startup] Opening ChromaDB collection...")
     _collection = get_collection()
     _seed_faq(_collection)
-    if _collection.count() == 0:
+    count = _collection.count()
+    if count == 0:
         raise RuntimeError(
             "No content in ChromaDB — run: python ingest.py data/Rohit_Jain_Resume.pdf"
         )
+    print(f"[startup] ChromaDB ready — {count} chunks loaded.")
     _build_bm25()
+    print("[startup] Index ready — bot is accepting questions.")
 
 
 def _build_bm25():
