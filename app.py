@@ -5,7 +5,7 @@ import os
 import threading
 import gradio as gr
 
-from rag import retrieve_and_answer, build_index, CONFIDENCE_THRESHOLD
+from rag import retrieve_and_answer_stream, build_index, CONFIDENCE_THRESHOLD
 from notify import notify_unanswered
 
 # Load index in background so Gradio binds the port immediately.
@@ -29,23 +29,23 @@ print("[startup] Gradio starting — index loading in background.", flush=True)
 
 def respond(message, history):
     if not _index_ready:
-        return "Still loading, please try again in a few seconds..."
-    answer, confidence, error = retrieve_and_answer(message, history)
+        yield "Still loading, please try again in a few seconds..."
+        return
+
+    partial = ""
+    confidence = 1.0
+    error = None
+
+    for partial, confidence, error in retrieve_and_answer_stream(message, history):
+        yield partial
 
     if error:
-        # Something broke (API credit exhausted, rate limited, etc.)
-        # Still tell Rohit, but don't spam him for every single rate-limit blip
-        # beyond what notify.py's internal rate limit already allows.
         notify_unanswered(message, reason="error", detail=error)
-        return answer
+        return
 
     if confidence < CONFIDENCE_THRESHOLD:
         notify_unanswered(message, reason="low_confidence")
-        answer += (
-            "\n\n_(I've flagged this question for Rohit to follow up on directly.)_"
-        )
-
-    return answer
+        yield partial + "\n\n_(I've flagged this question for Rohit to follow up on directly.)_"
 
 
 demo = gr.ChatInterface(

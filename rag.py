@@ -106,6 +106,9 @@ def build_index():
         )
     print(f"[startup] ChromaDB ready — {count} chunks loaded.", flush=True)
     _build_bm25()
+    # Pre-warm ONNX JIT so first user query doesn't pay the compilation cost.
+    print("[startup] Pre-warming ONNX model...", flush=True)
+    _collection.query(query_texts=["warmup"], n_results=1)
     print("[startup] Index ready — bot is accepting questions.", flush=True)
 
 
@@ -185,25 +188,7 @@ def _retrieve_hybrid(question, top_k=TOP_K):
 HISTORY_TURNS = 3  # number of past exchanges to include for context
 
 
-def retrieve_and_answer(question, history=None):
-    """
-    Returns (answer_text, confidence, error) where:
-      - answer_text is what to show the visitor
-      - confidence is the top semantic similarity score (0-1)
-      - error is None, or a short string describing what went wrong
-    """
-    if _collection is None:
-        build_index()
-
-    # Check semantic cache before hitting ChromaDB + LLM.
-    cached = get_cached_answer(question)
-    if cached is not None:
-        return cached, 1.0, None
-
-    retrieved, confidence = _retrieve_hybrid(question)
-    context = "\n\n---\n\n".join(retrieved)
-
-    # Build message list: last N turns of history + current question
+def _build_messages(question, history):
     messages = []
     if history:
         recent = history[-(HISTORY_TURNS * 2):]
@@ -215,44 +200,67 @@ def retrieve_and_answer(question, history=None):
                 messages.append({"role": "user", "content": user_msg})
                 messages.append({"role": "assistant", "content": assistant_msg})
     messages.append({"role": "user", "content": question})
+    return messages
+
+
+def retrieve_and_answer_stream(question, history=None):
+    """
+    Generator yielding (partial_answer, confidence, error).
+    partial_answer grows with each yield as the LLM streams tokens.
+    error is only set on the final yield if something went wrong.
+    """
+    if _collection is None:
+        build_index()
+
+    cached = get_cached_answer(question)
+    if cached is not None:
+        yield cached, 1.0, None
+        return
+
+    retrieved, confidence = _retrieve_hybrid(question)
+    context = "\n\n---\n\n".join(retrieved)
+    messages = _build_messages(question, history)
 
     try:
-        response = _client.messages.create(
+        full_answer = ""
+        with _client.messages.stream(
             model=MODEL_NAME,
             max_tokens=600,
             system=SYSTEM_PROMPT.format(context=context),
             messages=messages,
-        )
-        answer = response.content[0].text
-        # Only cache confident answers.
+        ) as stream:
+            for text in stream.text_stream:
+                full_answer += text
+                yield full_answer, confidence, None
+
         if confidence >= CONFIDENCE_THRESHOLD:
-            store_in_cache(question, answer)
-        return answer, confidence, None
+            store_in_cache(question, full_answer)
 
     except anthropic.APIStatusError as e:
         if e.status_code in (401, 403):
-            return (
+            yield (
                 "Rohit's assistant is temporarily offline for maintenance — "
                 "please check back soon or reach out to Rohit directly.",
                 confidence,
                 f"auth_error: {e}",
             )
-        if e.status_code == 429:
-            return (
+        elif e.status_code == 429:
+            yield (
                 "This bot is getting a lot of questions right now — please "
                 "try again in a moment, or reach out to Rohit directly.",
                 confidence,
                 f"rate_limited: {e}",
             )
-        return (
-            "Something went wrong on my end — please reach out to Rohit "
-            "directly in the meantime.",
-            confidence,
-            f"api_error: {e}",
-        )
+        else:
+            yield (
+                "Something went wrong on my end — please reach out to Rohit "
+                "directly in the meantime.",
+                confidence,
+                f"api_error: {e}",
+            )
 
     except Exception as e:
-        return (
+        yield (
             "Something went wrong on my end — please reach out to Rohit "
             "directly in the meantime.",
             confidence,
