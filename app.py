@@ -14,15 +14,17 @@ _index_ready = False
 def _load_index():
     global _index_ready
     try:
-        print("[startup] Loading index in background thread...")
+        print("[startup] Loading index in background thread...", flush=True)
         build_index()
         _index_ready = True
-        print("[startup] Background index load complete — ready.")
+        print("[startup] Background index load complete — ready.", flush=True)
     except Exception as e:
-        print(f"[startup] ERROR loading index: {e}")
+        import traceback
+        print(f"[startup] ERROR loading index: {e}", flush=True)
+        traceback.print_exc()
 
 threading.Thread(target=_load_index, daemon=True).start()
-print("[startup] Gradio starting — index loading in background.")
+print("[startup] Gradio starting — index loading in background.", flush=True)
 
 
 def respond(message, history):
