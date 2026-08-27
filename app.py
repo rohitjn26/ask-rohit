@@ -4,12 +4,8 @@ load_dotenv()
 import os
 import gradio as gr
 
-from rag import retrieve_and_answer, build_index, CONFIDENCE_THRESHOLD
+from rag import retrieve_and_answer, CONFIDENCE_THRESHOLD
 from notify import notify_unanswered
-
-# Build the retrieval index once at startup, not on every request.
-build_index()
-
 
 def respond(message, history):
     answer, confidence, error = retrieve_and_answer(message, history)
