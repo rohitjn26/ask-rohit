@@ -11,7 +11,5 @@ services:
         sync: false
       - key: NOTIFY_TO_EMAIL
         sync: false
-      - key: SENTENCE_TRANSFORMERS_HOME
-        value: ./models
       - key: PYTHONUNBUFFERED
         value: "1"

@@ -1,5 +1,9 @@
 #!/bin/bash
 set -e
 pip install -r requirements.txt
-export SENTENCE_TRANSFORMERS_HOME=./models
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+python -c "
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+ef = ONNXMiniLM_L6_V2()
+ef(['warmup'])
+print('ONNX model pre-download complete.')
+"

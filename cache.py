@@ -12,9 +12,9 @@ go stale after a re-ingest.
 
 import hashlib
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
-from db import CHROMA_DIR, EMBED_MODEL
+from db import CHROMA_DIR
 
 CACHE_COLLECTION_NAME = "resume_bot_cache"
 CACHE_SIMILARITY_THRESHOLD = 0.65
@@ -26,7 +26,7 @@ def _get_col():
     global _cache_col
     if _cache_col is None:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        ef = SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+        ef = ONNXMiniLM_L6_V2()
         _cache_col = client.get_or_create_collection(
             CACHE_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
