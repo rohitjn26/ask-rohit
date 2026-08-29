@@ -8,6 +8,7 @@ when new PDFs are ingested.
 """
 
 import os
+import re
 import hashlib
 import anthropic
 from rank_bm25 import BM25Okapi
@@ -119,7 +120,7 @@ def _build_bm25():
     _bm25_docs = data["documents"]
     _bm25_ids = data["ids"]
     tokenized = [
-        [w for w in doc.lower().split() if w not in STOP_WORDS]
+        [w for w in re.findall(r'[a-z0-9]+', doc.lower()) if w not in STOP_WORDS]
         for doc in _bm25_docs
     ]
     _bm25 = BM25Okapi(tokenized)
@@ -145,7 +146,7 @@ def _retrieve_hybrid(question, top_k=TOP_K):
     sem_doc_map = dict(zip(sem_ids, sem_results["documents"][0]))
 
     # BM25 search
-    tokenized_q = [w for w in question.lower().split() if w not in STOP_WORDS]
+    tokenized_q = [w for w in re.findall(r'[a-z0-9]+', question.lower()) if w not in STOP_WORDS]
     bm25_scores = _bm25.get_scores(tokenized_q)
     bm25_top_indices = sorted(
         range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
