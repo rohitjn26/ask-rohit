@@ -213,10 +213,12 @@ def retrieve_and_answer_stream(question, history=None):
     if _collection is None:
         build_index()
 
-    cached = get_cached_answer(question)
-    if cached is not None:
-        yield cached, 1.0, None
-        return
+    # Skip cache for follow-up questions — their meaning depends on history
+    if not history:
+        cached = get_cached_answer(question)
+        if cached is not None:
+            yield cached, 1.0, None
+            return
 
     retrieved, confidence = _retrieve_hybrid(question)
     context = "\n\n---\n\n".join(retrieved)

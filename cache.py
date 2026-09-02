@@ -17,7 +17,7 @@ from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from db import CHROMA_DIR
 
 CACHE_COLLECTION_NAME = "resume_bot_cache"
-CACHE_SIMILARITY_THRESHOLD = 0.65
+CACHE_SIMILARITY_THRESHOLD = 0.92
 
 _cache_col = None
 
