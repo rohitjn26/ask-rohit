@@ -39,7 +39,7 @@
     "id": "cross_company_02",
     "category": "cross_company",
     "question": "How many companies has Rohit worked at?",
-    "expected_answer": "5"
+    "expected_answer": "6"
   },
   {
     "id": "cross_company_03",

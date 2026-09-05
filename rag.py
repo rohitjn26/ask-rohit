@@ -12,6 +12,7 @@ import re
 import hashlib
 import anthropic
 from rank_bm25 import BM25Okapi
+from flashrank import Ranker, RerankRequest
 
 from db import get_collection
 from cache import get_cached_answer, store_in_cache
@@ -19,8 +20,9 @@ from cache import get_cached_answer, store_in_cache
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 MODEL_NAME = "claude-haiku-4-5-20251001"
 TOP_K = 6
-CONFIDENCE_THRESHOLD = 0.15  # lowered: BM25 handles keyword queries now
-RRF_K = 60                   # standard RRF constant
+RERANK_CANDIDATES = TOP_K * 3  # wider pool fetched before re-ranking
+CONFIDENCE_THRESHOLD = 0.15
+RRF_K = 60
 
 SYSTEM_PROMPT = """You are a helpful assistant answering questions on behalf \
 of Rohit Jain, based only on the context provided below. Speak about Rohit \
@@ -59,6 +61,14 @@ Context:
 
 _collection = None
 _client = anthropic.Anthropic()
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        _reranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
+    return _reranker
 
 # BM25 state — rebuilt whenever chunk count changes (new PDF ingested)
 _bm25 = None
@@ -126,9 +136,10 @@ def build_index():
         )
     print(f"[startup] ChromaDB ready — {count} chunks loaded.", flush=True)
     _build_bm25()
-    # Pre-warm ONNX JIT so first user query doesn't pay the compilation cost.
-    print("[startup] Pre-warming ONNX model...", flush=True)
+    # Pre-warm ONNX embedder and re-ranker so first query doesn't pay JIT cost.
+    print("[startup] Pre-warming ONNX models...", flush=True)
     _collection.query(query_texts=["warmup"], n_results=1)
+    _get_reranker().rerank(RerankRequest(query="warmup", passages=[{"id": 0, "text": "warmup"}]))
     print("[startup] Index ready — bot is accepting questions.", flush=True)
 
 
@@ -176,8 +187,9 @@ def _retrieve_hybrid(question, top_k=TOP_K):
             if m.get("source") in RESUME_SOURCES
         ]
 
-    # Semantic search — fetch 2x candidates for better RRF pool
-    n = min(top_k * 2, len(resume_indices))
+    # Candidate pool size: wider for deep-dive (re-ranking collapses it), tight for broad
+    pool_size = RERANK_CANDIDATES if deep_dive else top_k * 2
+    n = min(pool_size, len(resume_indices))
     sem_results = _collection.query(query_texts=[question], n_results=n, where=where)
     sem_ids = sem_results["ids"][0]
     sem_distances = sem_results["distances"][0]
@@ -188,7 +200,7 @@ def _retrieve_hybrid(question, top_k=TOP_K):
     bm25_scores = _bm25.get_scores(tokenized_q)
     bm25_top_indices = sorted(
         resume_indices, key=lambda i: bm25_scores[i], reverse=True
-    )[: top_k * 2]
+    )[:pool_size]
     bm25_ranked_ids = [_bm25_ids[i] for i in bm25_top_indices]
 
     # Reciprocal Rank Fusion
@@ -202,12 +214,25 @@ def _retrieve_hybrid(question, top_k=TOP_K):
         for doc_id in all_ids
     }
 
-    top_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
-
-    # Build full doc map (BM25 corpus covers everything)
+    # Build full doc map
     bm25_doc_map = {_bm25_ids[i]: _bm25_docs[i] for i in range(len(_bm25_ids))}
     id_to_doc = {**bm25_doc_map, **sem_doc_map}
-    top_docs = [id_to_doc[doc_id] for doc_id in top_ids if doc_id in id_to_doc]
+
+    if deep_dive:
+        # Wider pool → cross-encoder re-rank → top_k
+        candidate_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:RERANK_CANDIDATES]
+        candidate_ids = [cid for cid in candidate_ids if cid in id_to_doc]
+        candidate_docs = [id_to_doc[cid] for cid in candidate_ids]
+        passages = [{"id": i, "text": doc} for i, doc in enumerate(candidate_docs)]
+        reranked = _get_reranker().rerank(RerankRequest(query=question, passages=passages))
+        top_ids = [candidate_ids[r["id"]] for r in reranked[:top_k]]
+        top_docs = [candidate_docs[r["id"]] for r in reranked[:top_k]]
+    else:
+        # Broad question — pass all resume+faq chunks; 12 total, LLM handles it fine
+        # and cross-company questions need every employer chunk visible
+        top_ids = [cid for cid in sorted(rrf_scores, key=rrf_scores.get, reverse=True)
+                   if cid in id_to_doc]
+        top_docs = [id_to_doc[cid] for cid in top_ids]
 
     # Confidence from best semantic match (primary signal for notification)
     semantic_confidence = 1.0 - sem_distances[0] if sem_distances else 0.0
@@ -215,7 +240,7 @@ def _retrieve_hybrid(question, top_k=TOP_K):
     print(
         f"[hybrid] sem_confidence={semantic_confidence:.3f} | "
         f"top_bm25_score={bm25_scores[bm25_top_indices[0]]:.2f} | "
-        f"chunks={[i[:8] for i in top_ids]}"
+        f"reranked_chunks={[i[:8] for i in top_ids]}"
     )
     if semantic_confidence < CONFIDENCE_THRESHOLD:
         print("[hybrid] low confidence — retrieved chunks:")
