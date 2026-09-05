@@ -223,11 +223,10 @@ def build_chunks(lines, body_size, header_threshold):
             current_job = content
 
         elif kind == 'BULLET':
-            flush()
-            current_lines = [content]
+            current_lines.append(f"• {content}")
 
         elif kind == 'SUB_BULLET':
-            current_lines.append(f"– {content}")
+            current_lines.append(f"  – {content}")
 
         elif kind == 'BODY':
             current_lines.append(content)
@@ -261,14 +260,16 @@ def try_rule_based_chunks(pdf_path):
 
 # --- Markdown chunking ----------------------------------------------------
 
+QA_RE = re.compile(r'^\*\*Q\d+:')
+
+
 def chunk_markdown(md_path):
     """
-    Chunk a markdown file by header hierarchy + bullet structure.
-
-    # H1 and ## H2 = section/sub-section boundaries (context carriers)
-    ### H3 = chunk boundary within a section
-    - bullet lines = individual chunk or appended to current chunk
-    Regular paragraphs = body, flushed at next header
+    Chunk a markdown file. Two boundary types:
+      - # H1 / ## H2  : section context carriers (not chunks themselves)
+      - **Qn:**        : Q&A chunk boundary — one chunk per question + answer
+    Everything else accumulates under the current H1/H2 context and flushes
+    at the next boundary (covers intro text, cheat-sheets, etc.)
     """
     with open(md_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -293,7 +294,7 @@ def chunk_markdown(md_path):
 
     for raw in lines:
         line = raw.rstrip()
-        if not line:
+        if not line or line == "---":
             continue
 
         if line.startswith("# "):
@@ -303,14 +304,9 @@ def chunk_markdown(md_path):
         elif line.startswith("## "):
             flush()
             current_h2 = line[3:].strip()
-        elif line.startswith("### "):
+        elif QA_RE.match(line):
             flush()
-            current_lines = [line[4:].strip()]
-        elif line.startswith(("- ", "* ", "• ")):
-            flush()
-            current_lines = [line[2:].strip()]
-        elif line.startswith("  - ") or line.startswith("  * "):
-            current_lines.append(f"– {line.strip()[2:]}")
+            current_lines = [line.strip()]
         else:
             current_lines.append(line.strip())
 

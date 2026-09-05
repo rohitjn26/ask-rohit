@@ -5,3 +5,4 @@ models/
 data/.ingest_manifest.json
 __pycache__/
 *.pyc
+tests/results_*.json

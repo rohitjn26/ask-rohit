@@ -64,7 +64,23 @@ _client = anthropic.Anthropic()
 _bm25 = None
 _bm25_docs = []
 _bm25_ids = []
+_bm25_metas = []
 _bm25_chunk_count = 0
+
+# Sources treated as "resume-level" — used for all questions
+RESUME_SOURCES = {"Rohit_Jain_Resume.pdf", "faq.md"}
+
+# Keywords that signal a technical deep-dive question
+DEEP_DIVE_TRIGGERS = {
+    "architecture", "implementation", "technical", "design",
+    "tradeoff", "pipeline", "infrastructure", "built", "implement",
+    "explain", "walk", "approach",
+    # specific tech from the deep-dive doc
+    "cdc", "debezium", "risingwave", "starrocks", "kafka",
+    "mongodb", "bson", "iceberg", "sqlmesh", "duckdb",
+    "compaction", "partition", "latency", "throughput", "streaming",
+    "schema", "ontology", "mcp", "agentic",
+}
 
 STOP_WORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -118,10 +134,11 @@ def build_index():
 
 def _build_bm25():
     """Build BM25 index in memory from all chunks currently in ChromaDB."""
-    global _bm25, _bm25_docs, _bm25_ids, _bm25_chunk_count
+    global _bm25, _bm25_docs, _bm25_ids, _bm25_metas, _bm25_chunk_count
     data = _collection.get()
     _bm25_docs = data["documents"]
     _bm25_ids = data["ids"]
+    _bm25_metas = data["metadatas"]
     tokenized = [
         [w for w in re.findall(r'[a-z0-9]+', doc.lower()) if w not in STOP_WORDS]
         for doc in _bm25_docs
@@ -137,22 +154,40 @@ def _ensure_bm25():
         _build_bm25()
 
 
+def _is_deep_dive(question):
+    tokens = set(re.findall(r'[a-z0-9]+', question.lower()))
+    return bool(tokens & DEEP_DIVE_TRIGGERS)
+
+
 def _retrieve_hybrid(question, top_k=TOP_K):
     """Hybrid BM25 + semantic search merged via Reciprocal Rank Fusion."""
     _ensure_bm25()
 
+    deep_dive = _is_deep_dive(question)
+    if deep_dive:
+        print(f"[retrieval] deep-dive mode — all sources included")
+        where = None
+        resume_indices = list(range(len(_bm25_ids)))
+    else:
+        print(f"[retrieval] resume-only mode — deep dive chunks excluded")
+        where = {"source": {"$in": list(RESUME_SOURCES)}}
+        resume_indices = [
+            i for i, m in enumerate(_bm25_metas)
+            if m.get("source") in RESUME_SOURCES
+        ]
+
     # Semantic search — fetch 2x candidates for better RRF pool
-    n = min(top_k * 2, _collection.count())
-    sem_results = _collection.query(query_texts=[question], n_results=n)
+    n = min(top_k * 2, len(resume_indices))
+    sem_results = _collection.query(query_texts=[question], n_results=n, where=where)
     sem_ids = sem_results["ids"][0]
     sem_distances = sem_results["distances"][0]
     sem_doc_map = dict(zip(sem_ids, sem_results["documents"][0]))
 
-    # BM25 search
+    # BM25 search — restricted to the same source pool
     tokenized_q = [w for w in re.findall(r'[a-z0-9]+', question.lower()) if w not in STOP_WORDS]
     bm25_scores = _bm25.get_scores(tokenized_q)
     bm25_top_indices = sorted(
-        range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
+        resume_indices, key=lambda i: bm25_scores[i], reverse=True
     )[: top_k * 2]
     bm25_ranked_ids = [_bm25_ids[i] for i in bm25_top_indices]
 
