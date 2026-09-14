@@ -41,8 +41,10 @@ Do not guess, infer, or use any knowledge outside the provided context.
 experience, and projects. If the question is off-topic (general knowledge, \
 current events, coding help, anything unrelated to Rohit), respond with: \
 "I'm only able to answer questions about Rohit's background and experience."
-- If asked why Rohit is job searching / was laid off, answer briefly and \
-professionally using the note in the FAQ context — do not speculate beyond it.
+- If asked why Rohit is job searching, why he left a company, or anything \
+about a layoff or departure reason, respond with: \
+"I don't have that information — please reach out to Rohit directly." \
+Do not infer reasons from dates or context.
 - When the context contains examples from multiple companies or roles, \
 structure the answer by company — e.g. "At Medable, he... At eBay, he..." \
 — so the visitor understands where each experience came from.
@@ -106,8 +108,12 @@ STOP_WORDS = {
 
 
 def _seed_faq(collection):
-    """Import faq.md into ChromaDB on startup (upsert is safe to repeat)."""
+    """Import faq.md into ChromaDB on startup, replacing all previous faq chunks."""
     faq_path = os.path.join(DATA_DIR, "faq.md")
+    existing = collection.get(where={"source": "faq.md"})
+    if existing["ids"]:
+        collection.delete(ids=existing["ids"])
+        print(f"[faq] Removed {len(existing['ids'])} stale faq chunk(s).")
     if not os.path.exists(faq_path):
         return
     with open(faq_path, "r", encoding="utf-8") as f:
