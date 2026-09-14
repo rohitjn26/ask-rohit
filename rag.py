@@ -117,7 +117,7 @@ def _seed_faq(collection):
     collection.upsert(
         ids=ids,
         documents=paras,
-        metadatas=[{"source": "faq.md"} for _ in paras],
+        metadatas=[{"source": "faq.md", "chunk_type": "faq"} for _ in paras],
     )
 
 

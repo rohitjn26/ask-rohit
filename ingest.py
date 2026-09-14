@@ -175,6 +175,10 @@ def classify_line(text, size, bold_ratio, body_size, header_threshold):
             and stripped[0].isalpha() and (has_year or has_separator)):
         return 'JOB', stripped
 
+    # "Earlier: Role — Company, Location (year–year)" — not bold in most PDFs
+    if stripped.lower().startswith('earlier:'):
+        return 'EARLIER', stripped
+
     return 'BODY', stripped
 
 
@@ -227,6 +231,13 @@ def build_chunks(lines, body_size, header_threshold):
 
         elif kind == 'SUB_BULLET':
             current_lines.append(f"  – {content}")
+
+        elif kind == 'EARLIER':
+            flush()
+            current_job = ""
+            prefix = context_prefix()
+            chunk = f"{prefix}\n{content}" if prefix else content
+            chunks.append(chunk.strip())
 
         elif kind == 'BODY':
             current_lines.append(content)
@@ -423,6 +434,62 @@ def dedup_chunks(chunks, source_name, collection):
     return unique
 
 
+# --- Metadata extraction --------------------------------------------------
+
+def extract_chunk_metadata(chunk, source_name):
+    meta = {"source": source_name}
+    first_line = chunk.split('\n')[0]
+
+    if source_name == "faq.md":
+        meta["chunk_type"] = "faq"
+        return meta
+
+    if source_name.endswith('.md'):
+        meta["chunk_type"] = "deep_dive"
+        q_match = re.search(r'\*\*Q(\d+):', chunk)
+        if q_match:
+            meta["question_num"] = int(q_match.group(1))
+        if '|' in first_line:
+            meta["section"] = first_line.split('|')[0].strip()[:80]
+        return meta
+
+    # Resume PDF
+    if 'PROFESSIONAL EXPERIENCE' in first_line:
+        meta["chunk_type"] = "experience"
+        parts = [p.strip() for p in first_line.split('|')]
+        if len(parts) >= 2:
+            role_company = parts[1]
+            if ' — ' in role_company:
+                role, company = role_company.split(' — ', 1)
+                meta["role"] = role.strip()
+                meta["company"] = company.strip()
+        if len(parts) >= 4:
+            years = re.findall(r'\b(20\d{2}|19\d{2})\b', parts[-1])
+            if years:
+                meta["start_year"] = int(years[0])
+            if len(years) >= 2:
+                meta["end_year"] = int(years[1])
+        # "Earlier: Role — Company, Location (year–year)" format
+        if not meta.get("company"):
+            earlier_match = re.search(r'Earlier:\s+(.+?)\s+—\s+([^,\n]+)', chunk)
+            if earlier_match:
+                meta["role"] = earlier_match.group(1).strip()
+                meta["company"] = earlier_match.group(2).strip()
+            years = re.findall(r'\b(19\d{2}|20\d{2})\b', chunk)
+            if years:
+                meta["start_year"] = int(years[0])
+            if len(years) >= 2:
+                meta["end_year"] = int(years[1])
+    elif 'TECHNICAL EXPERTISE' in first_line or 'SKILLS' in first_line:
+        meta["chunk_type"] = "skills"
+    elif 'EDUCATION' in first_line:
+        meta["chunk_type"] = "education"
+    else:
+        meta["chunk_type"] = "summary"
+
+    return meta
+
+
 # --- Main ingestion flow --------------------------------------------------
 
 def ingest(file_path, collection, client):
@@ -470,7 +537,7 @@ def ingest(file_path, collection, client):
     collection.upsert(
         ids=ids,
         documents=chunks,
-        metadatas=[{"source": source_name} for _ in chunks],
+        metadatas=[extract_chunk_metadata(chunk, source_name) for chunk in chunks],
     )
     print(f"  Upserted {len(chunks)} chunks for {source_name} into ChromaDB.")
     return True
