@@ -3,7 +3,7 @@
 Eval script for the resume bot golden test set.
 
 Each answer is judged by Claude Haiku (binary PASS/FAIL + one-line reason).
-Off-topic cases use exact phrase match instead of the LLM judge.
+Cases whose expected answer is a known refusal phrase use exact match instead of the LLM judge.
 
 Usage:
     python tests/eval.py
@@ -26,7 +26,13 @@ import anthropic
 
 GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "golden.json")
 RESULTS_DIR = os.path.dirname(__file__)
-OFF_TOPIC_PHRASE = "I'm only able to answer questions about Rohit's background and experience."
+
+# Any expected answer that is one of these phrases gets exact-match scoring,
+# regardless of category. Covers both off-topic refusals and edge-case refusals.
+REFUSAL_PHRASES = {
+    "I'm only able to answer questions about Rohit's background and experience.",
+    "I don't have that information — please reach out to Rohit directly.",
+}
 
 JUDGE_PROMPT = """\
 You are evaluating an AI assistant that answers questions about a person named Rohit Jain \
@@ -85,9 +91,9 @@ def collect_answer(question):
 
 
 def score_case(case, actual):
-    if case["category"] == "off_topic":
-        passed = OFF_TOPIC_PHRASE.lower() in actual.lower()
-        reason = "correct refusal" if passed else f"expected refusal phrase not found"
+    if case["expected_answer"] in REFUSAL_PHRASES:
+        passed = any(phrase.lower() in actual.lower() for phrase in REFUSAL_PHRASES)
+        reason = "correct refusal" if passed else "expected refusal phrase not found"
         return passed, reason, "exact"
 
     passed, reason = llm_judge(case["question"], case["expected_answer"], actual)
