@@ -264,8 +264,14 @@ def _build_messages(question, history):
         recent = history[-(HISTORY_TURNS * 2):]
         for turn in recent:
             if isinstance(turn, dict):
+                # plain dict with role/content keys
                 messages.append({"role": turn["role"], "content": turn["content"]})
+            elif hasattr(turn, "role"):
+                # Gradio 6 ChatMessage dataclass
+                content = turn.content if isinstance(turn.content, str) else str(turn.content)
+                messages.append({"role": turn.role, "content": content})
             else:
+                # legacy Gradio tuple format: (user_msg, assistant_msg)
                 user_msg, assistant_msg = turn
                 messages.append({"role": "user", "content": user_msg})
                 messages.append({"role": "assistant", "content": assistant_msg})
